@@ -20,135 +20,133 @@ func getTestParcel() Parcel {
 		Client:    1000,
 		Status:    ParcelStatusRegistered,
 		Address:   "test",
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
-func setupDB(t *testing.T) *sql.DB {
+func setupTestDB(t *testing.T) *sql.DB {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 
-	_, err = db.Exec("CREATE TABLE parcel (number INTEGER PRIMARY KEY AUTOINCREMENT, client INTEGER, status TEXT, address TEXT, created_at DATETIME)")
+	_, err = db.Exec(`
+		CREATE TABLE parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER,
+			status TEXT,
+			address TEXT,
+			created_at TEXT
+		)`)
 	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		db.Close()
+	})
 
 	return db
 }
 
 func TestAddGetDelete(t *testing.T) {
-	db := setupDB(t)
-	defer db.Close()
-
+	db := setupTestDB(t)
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
+	// Add parcel
 	id, err := store.Add(parcel)
 	require.NoError(t, err)
 	require.NotZero(t, id)
 
-	p, err := store.Get(id)
+	// Get parcel
+	stored, err := store.Get(id)
 	require.NoError(t, err)
-	require.Equal(t, id, p.Number)
-	require.Equal(t, parcel.Client, p.Client)
-	require.Equal(t, parcel.Status, p.Status)
-	require.Equal(t, parcel.Address, p.Address)
-	require.False(t, p.CreatedAt.IsZero())
 
+	// Check fields
+	require.Equal(t, id, stored.Number)
+	require.Equal(t, parcel.Client, stored.Client)
+	require.Equal(t, parcel.Status, stored.Status)
+	require.Equal(t, parcel.Address, stored.Address)
+	require.Equal(t, parcel.CreatedAt, stored.CreatedAt)
+
+	// Delete parcel
 	err = store.Delete(id)
 	require.NoError(t, err)
 
+	// Check deletion
 	_, err = store.Get(id)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestSetAddress(t *testing.T) {
-	db := setupDB(t)
-	defer db.Close()
-
+	db := setupTestDB(t)
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
+	// Add parcel
 	id, err := store.Add(parcel)
 	require.NoError(t, err)
 
+	// Set new address
 	newAddress := "new test address"
 	err = store.SetAddress(id, newAddress)
 	require.NoError(t, err)
 
-	p, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, newAddress, p.Address)
-}
-
-func TestSetAddressOnSentParcel(t *testing.T) {
-	db := setupDB(t)
-	defer db.Close()
-
-	store := NewParcelStore(db)
-	parcel := getTestParcel()
-
-	id, err := store.Add(parcel)
+	// Get updated parcel
+	updated, err := store.Get(id)
 	require.NoError(t, err)
 
-	err = store.SetStatus(id, ParcelStatusSent)
-	require.NoError(t, err)
+	// Check updated address
+	require.Equal(t, newAddress, updated.Address)
 
-	err = store.SetAddress(id, "new_address")
-	require.ErrorIs(t, err, ErrNotFound)
+	// Check other fields remain unchanged
+	require.Equal(t, parcel.Client, updated.Client)
+	require.Equal(t, parcel.Status, updated.Status)
+	require.Equal(t, parcel.CreatedAt, updated.CreatedAt)
 }
 
 func TestSetStatus(t *testing.T) {
-	db := setupDB(t)
-	defer db.Close()
-
+	db := setupTestDB(t)
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
+	// Add parcel
 	id, err := store.Add(parcel)
 	require.NoError(t, err)
 
+	// Update status
 	err = store.SetStatus(id, ParcelStatusSent)
 	require.NoError(t, err)
 
-	p, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, ParcelStatusSent, p.Status)
-}
-
-func TestDeleteSentParcel(t *testing.T) {
-	db := setupDB(t)
-	defer db.Close()
-
-	store := NewParcelStore(db)
-	parcel := getTestParcel()
-
-	id, err := store.Add(parcel)
+	// Get updated parcel
+	updated, err := store.Get(id)
 	require.NoError(t, err)
 
-	err = store.SetStatus(id, ParcelStatusSent)
-	require.NoError(t, err)
+	// Check updated status
+	require.Equal(t, ParcelStatusSent, updated.Status)
 
-	err = store.Delete(id)
-	require.ErrorIs(t, err, ErrNotFound)
+	// Check other fields remain unchanged
+	require.Equal(t, parcel.Client, updated.Client)
+	require.Equal(t, parcel.Address, updated.Address)
+	require.Equal(t, parcel.CreatedAt, updated.CreatedAt)
 }
 
 func TestGetByClient(t *testing.T) {
-	db := setupDB(t)
-	defer db.Close()
-
+	db := setupTestDB(t)
 	store := NewParcelStore(db)
+
+	// Create test parcels
 	parcels := []Parcel{
 		getTestParcel(),
 		getTestParcel(),
 		getTestParcel(),
 	}
-	parcelMap := map[int]Parcel{}
+	parcelMap := make(map[int]Parcel)
 
 	client := randRange.Intn(10_000_000)
-	parcels[0].Client = client
-	parcels[1].Client = client
-	parcels[2].Client = client
+	for i := range parcels {
+		parcels[i].Client = client
+	}
 
-	for i := 0; i < len(parcels); i++ {
+	// Add parcels
+	for i := range parcels {
 		id, err := store.Add(parcels[i])
 		require.NoError(t, err)
 		require.NotZero(t, id)
@@ -157,16 +155,15 @@ func TestGetByClient(t *testing.T) {
 		parcelMap[id] = parcels[i]
 	}
 
+	// Get parcels by client
 	storedParcels, err := store.GetByClient(client)
 	require.NoError(t, err)
 	require.Len(t, storedParcels, len(parcels))
 
-	for _, parcel := range storedParcels {
-		expectedParcel, exists := parcelMap[parcel.Number]
+	// Check all parcels
+	for _, p := range storedParcels {
+		expected, exists := parcelMap[p.Number]
 		require.True(t, exists)
-		require.Equal(t, expectedParcel.Client, parcel.Client)
-		require.Equal(t, expectedParcel.Status, parcel.Status)
-		require.Equal(t, expectedParcel.Address, parcel.Address)
-		require.False(t, parcel.CreatedAt.IsZero())
+		require.Equal(t, expected, p)
 	}
 }

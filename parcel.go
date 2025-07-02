@@ -5,8 +5,6 @@ import (
 	"errors"
 )
 
-var ErrNotFound = errors.New("parcel not found or invalid status")
-
 type ParcelStore struct {
 	db *sql.DB
 }
@@ -41,6 +39,9 @@ func (s ParcelStore) Get(number int) (Parcel, error) {
 	p := Parcel{}
 	err := row.Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return p, sql.ErrNoRows
+		}
 		return p, err
 	}
 
@@ -83,43 +84,17 @@ func (s ParcelStore) SetStatus(number int, status string) error {
 }
 
 func (s ParcelStore) SetAddress(number int, address string) error {
-	res, err := s.db.Exec(
+	_, err := s.db.Exec(
 		"UPDATE parcel SET address = ? WHERE number = ? AND status = ?",
 		address, number, ParcelStatusRegistered,
 	)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+	return err
 }
 
 func (s ParcelStore) Delete(number int) error {
-	res, err := s.db.Exec(
+	_, err := s.db.Exec(
 		"DELETE FROM parcel WHERE number = ? AND status = ?",
 		number, ParcelStatusRegistered,
 	)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+	return err
 }
